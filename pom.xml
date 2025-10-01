@@ -22,6 +22,10 @@
     <modules>
         <module>shared/common-lib</module>
         <module>shared/database-models</module>
+        <module>shared/common-lib</module>
+        <module>shared/database-models</module>
+        <module>services/courseService</module>
+        <module>services/userCourseService</module>
         <!-- Сервисы будут добавлены здесь по мере создания -->
     </modules>
 
