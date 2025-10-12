@@ -2,9 +2,9 @@ name: 🚀 LMS Requirements Check
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, master, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, master ]
 
 jobs:
   requirements-check:
@@ -49,11 +49,18 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: 📦 Cache Maven
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 📦 Cache Gradle packages
         uses: actions/cache@v4
         with:
-          path: ~/.m2
-          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       # ✅ ТРЕБОВАНИЯ 1-4: Проверка версий
       - name: 🔍 Check Tool Versions
@@ -61,8 +68,8 @@ jobs:
           echo "✅ ТРЕБОВАНИЕ 1: Java версия"
           java -version
           echo ""
-          echo "✅ ТРЕБОВАНИЕ 2: Maven версия"
-          mvn -version -U
+          echo "✅ ТРЕБОВАНИЕ 2: Gradle версия"
+          ./gradlew --version
           echo ""
           echo "✅ ТРЕБОВАНИЕ 3: PostgreSQL версия"
           sudo apt-get update -qq
@@ -76,29 +83,40 @@ jobs:
           sudo apt-get install -y mongodb-mongosh
           mongosh --host localhost:27017 --username lms_user --password lms_password --authenticationDatabase admin --eval "print('MongoDB version: ' + db.version())"
 
-      # ✅ ТРЕБОВАНИЕ 5: Проверка стиля кода
+      # ✅ ТРЕБОВАНИЕ 5: Проверка стиля кода (Checkstyle)
       - name: 🎨 Code Style Check
         run: |
           echo "✅ ТРЕБОВАНИЕ 5: Проверка стиля кода (Checkstyle)"
-          mvn checkstyle:check -B -U || echo "⚠️ Найдены нарушения стиля (это нормально для проверки)"
+          ./gradlew checkstyleMain checkstyleTest || echo "⚠️ Найдены нарушения стиля (это нормально для проверки)"
 
-      # ✅ ТРЕБОВАНИЕ 6: Проверка потенциальных ошибок
+      # ✅ ТРЕБОВАНИЕ 6: Проверка потенциальных ошибок (SpotBugs/PMD)
       - name: 🐛 Bug Detection
         run: |
-          echo "✅ ТРЕБОВАНИЕ 6: Проверка потенциальных ошибок (PMD)"
-          mvn compile pmd:check -B -U || echo "⚠️ Найдены потенциальные проблемы (это нормально для проверки)"
+          echo "✅ ТРЕБОВАНИЕ 6: Проверка потенциальных ошибок"
+          ./gradlew spotbugsMain || echo "⚠️ Найдены потенциальные проблемы (это нормально для проверки)"
 
+      # ✅ ТРЕБОВАНИЕ 7: Запуск тестов
       - name: 🧪 Run Tests
         run: |
           echo "✅ ТРЕБОВАНИЕ 7: Запуск тестов"
-          mvn test -B -U
+          ./gradlew test --info
 
+      # ✅ ТРЕБОВАНИЕ 8: Сборка JAR
       - name: 📦 Build JAR
         run: |
           echo "✅ ТРЕБОВАНИЕ 8: Сборка JAR"
-          mvn package -DskipTests -B -U
+          ./gradlew build -x test
           echo "📦 Созданные JAR файлы:"
-          find . -name "*.jar" -type f | head -10
+          find . -name "*.jar" -type f | grep -v "gradle-wrapper" | head -10
+
+      - name: 📊 Test Report
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Gradle Tests
+          path: '**/build/test-results/test/*.xml'
+          reporter: java-junit
+          fail-on-error: true
 
       - name: ✅ Final Summary
         run: |
@@ -106,10 +124,10 @@ jobs:
           echo "🎯       ВСЕ ТРЕБОВАНИЯ ВЫПОЛНЕНЫ!"
           echo "🎯 =========================================="
           echo "✅ Java 21 - проверен"
-          echo "✅ Maven - проверен"
+          echo "✅ Gradle - проверен"
           echo "✅ PostgreSQL 15 - проверен"
           echo "✅ MongoDB 7.0 - проверен"
           echo "✅ Checkstyle - выполнена проверка стиля"
-          echo "✅ PMD - выполнена проверка ошибок"
+          echo "✅ SpotBugs - выполнена проверка ошибок"
           echo "✅ Тесты - выполнены"
           echo "✅ JAR - создан"
