@@ -1,4 +1,4 @@
-name: 🚀 LMS Requirements Check
+name: 🚀 LMS CI Pipeline
 
 on:
   push:
@@ -7,8 +7,47 @@ on:
     branches: [ main, master ]
 
 jobs:
-  requirements-check:
-    name: ✅ All Requirements Verification
+  # Определение изменённых сервисов
+  detect-changes:
+    name: 🔍 Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      auth-service: ${{ steps.filter.outputs.auth-service }}
+      course-service: ${{ steps.filter.outputs.course-service }}
+      user-service: ${{ steps.filter.outputs.user-service }}
+      notification-service: ${{ steps.filter.outputs.notification-service }}
+      common: ${{ steps.filter.outputs.common }}
+      run-all: ${{ steps.filter.outputs.run-all }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            auth-service:
+              - 'auth-service/**'
+            course-service:
+              - 'course-service/**'
+            user-service:
+              - 'user-service/**'
+            notification-service:
+              - 'notification-service/**'
+            common:
+              - 'common/**'
+              - 'build.gradle*'
+              - 'settings.gradle*'
+              - 'gradle/**'
+            run-all:
+              - '.github/workflows/**'
+              - 'build.gradle*'
+              - 'settings.gradle*'
+
+  # Тесты для Auth Service
+  test-auth-service:
+    name: 🔐 Auth Service Tests
+    needs: detect-changes
+    if: needs.detect-changes.outputs.auth-service == 'true' || needs.detect-changes.outputs.common == 'true' || needs.detect-changes.outputs.run-all == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -26,6 +65,38 @@ jobs:
         ports:
           - 5432:5432
 
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ☕ Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 🧪 Run Auth Service Tests
+        run: ./gradlew :auth-service:test --info
+
+      - name: 📊 Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Auth Service Tests
+          path: 'auth-service/build/test-results/test/*.xml'
+          reporter: java-junit
+
+  # Тесты для Course Service
+  test-course-service:
+    name: 📚 Course Service Tests
+    needs: detect-changes
+    if: needs.detect-changes.outputs.course-service == 'true' || needs.detect-changes.outputs.common == 'true' || needs.detect-changes.outputs.run-all == 'true'
+    runs-on: ubuntu-latest
+
+    services:
       mongodb:
         image: mongo:7.0
         env:
@@ -40,94 +111,163 @@ jobs:
           - 27017:27017
 
     steps:
-      - name: 📥 Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: ☕ Setup JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
+          cache: 'gradle'
 
       - name: 🐘 Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: 📦 Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+      - name: 🧪 Run Course Service Tests
+        run: ./gradlew :course-service:test --info
 
-      # ✅ ТРЕБОВАНИЯ 1-4: Проверка версий
-      - name: 🔍 Check Tool Versions
-        run: |
-          echo "✅ ТРЕБОВАНИЕ 1: Java версия"
-          java -version
-          echo ""
-          echo "✅ ТРЕБОВАНИЕ 2: Gradle версия"
-          ./gradlew --version
-          echo ""
-          echo "✅ ТРЕБОВАНИЕ 3: PostgreSQL версия"
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-client
-          PGPASSWORD=lms_password psql -h localhost -U lms_user -d lmsdb -c "SELECT version();"
-          echo ""
-          echo "✅ ТРЕБОВАНИЕ 4: MongoDB версия"
-          curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
-          echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
-          sudo apt-get update -qq
-          sudo apt-get install -y mongodb-mongosh
-          mongosh --host localhost:27017 --username lms_user --password lms_password --authenticationDatabase admin --eval "print('MongoDB version: ' + db.version())"
-
-      # ✅ ТРЕБОВАНИЕ 5: Проверка стиля кода (Checkstyle)
-      - name: 🎨 Code Style Check
-        run: |
-          echo "✅ ТРЕБОВАНИЕ 5: Проверка стиля кода (Checkstyle)"
-          ./gradlew checkstyleMain checkstyleTest || echo "⚠️ Найдены нарушения стиля (это нормально для проверки)"
-
-      # ✅ ТРЕБОВАНИЕ 6: Проверка потенциальных ошибок (SpotBugs/PMD)
-      - name: 🐛 Bug Detection
-        run: |
-          echo "✅ ТРЕБОВАНИЕ 6: Проверка потенциальных ошибок"
-          ./gradlew spotbugsMain || echo "⚠️ Найдены потенциальные проблемы (это нормально для проверки)"
-
-      # ✅ ТРЕБОВАНИЕ 7: Запуск тестов
-      - name: 🧪 Run Tests
-        run: |
-          echo "✅ ТРЕБОВАНИЕ 7: Запуск тестов"
-          ./gradlew test --info
-
-      # ✅ ТРЕБОВАНИЕ 8: Сборка JAR
-      - name: 📦 Build JAR
-        run: |
-          echo "✅ ТРЕБОВАНИЕ 8: Сборка JAR"
-          ./gradlew build -x test
-          echo "📦 Созданные JAR файлы:"
-          find . -name "*.jar" -type f | grep -v "gradle-wrapper" | head -10
-
-      - name: 📊 Test Report
+      - name: 📊 Publish Test Results
         uses: dorny/test-reporter@v1
         if: always()
         with:
-          name: Gradle Tests
-          path: '**/build/test-results/test/*.xml'
+          name: Course Service Tests
+          path: 'course-service/build/test-results/test/*.xml'
           reporter: java-junit
-          fail-on-error: true
 
-      - name: ✅ Final Summary
+  # Тесты для User Service
+  test-user-service:
+    name: 👤 User Service Tests
+    needs: detect-changes
+    if: needs.detect-changes.outputs.user-service == 'true' || needs.detect-changes.outputs.common == 'true' || needs.detect-changes.outputs.run-all == 'true'
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: lms_password
+          POSTGRES_USER: lms_user
+          POSTGRES_DB: lmsdb
+        options: >-
+          --health-cmd "pg_isready -U lms_user -d lmsdb"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ☕ Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 🧪 Run User Service Tests
+        run: ./gradlew :user-service:test --info
+
+      - name: 📊 Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: User Service Tests
+          path: 'user-service/build/test-results/test/*.xml'
+          reporter: java-junit
+
+  # Тесты для Notification Service
+  test-notification-service:
+    name: 📧 Notification Service Tests
+    needs: detect-changes
+    if: needs.detect-changes.outputs.notification-service == 'true' || needs.detect-changes.outputs.common == 'true' || needs.detect-changes.outputs.run-all == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ☕ Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 🧪 Run Notification Service Tests
+        run: ./gradlew :notification-service:test --info
+
+      - name: 📊 Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Notification Service Tests
+          path: 'notification-service/build/test-results/test/*.xml'
+          reporter: java-junit
+
+  # Проверка качества кода
+  code-quality:
+    name: 🎨 Code Quality
+    runs-on: ubuntu-latest
+    needs: detect-changes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ☕ Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 🎨 Checkstyle
+        run: ./gradlew checkstyleMain checkstyleTest
+        continue-on-error: true
+
+      - name: 🐛 SpotBugs
+        run: ./gradlew spotbugsMain
+        continue-on-error: true
+
+  # Сборка всего проекта
+  build:
+    name: 📦 Build All Services
+    runs-on: ubuntu-latest
+    needs: [test-auth-service, test-course-service, test-user-service, test-notification-service, code-quality]
+    if: always() && (needs.test-auth-service.result == 'success' || needs.test-auth-service.result == 'skipped') && (needs.test-course-service.result == 'success' || needs.test-course-service.result == 'skipped') && (needs.test-user-service.result == 'success' || needs.test-user-service.result == 'skipped') && (needs.test-notification-service.result == 'success' || needs.test-notification-service.result == 'skipped')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ☕ Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 📦 Build JARs
+        run: ./gradlew build -x test
+
+      - name: 📋 List Artifacts
+        run: |
+          echo "📦 Созданные JAR файлы:"
+          find . -name "*.jar" -type f | grep -v "gradle-wrapper" | grep "build/libs"
+
+      - name: ✅ Summary
         run: |
           echo "🎯 =========================================="
-          echo "🎯       ВСЕ ТРЕБОВАНИЯ ВЫПОЛНЕНЫ!"
+          echo "🎯       СБОРКА УСПЕШНО ЗАВЕРШЕНА!"
           echo "🎯 =========================================="
-          echo "✅ Java 21 - проверен"
-          echo "✅ Gradle - проверен"
-          echo "✅ PostgreSQL 15 - проверен"
-          echo "✅ MongoDB 7.0 - проверен"
-          echo "✅ Checkstyle - выполнена проверка стиля"
-          echo "✅ SpotBugs - выполнена проверка ошибок"
-          echo "✅ Тесты - выполнены"
-          echo "✅ JAR - создан"
